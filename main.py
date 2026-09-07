@@ -1,3 +1,4 @@
+```python
 import streamlit as st
 import requests
 import pandas as pd
@@ -22,7 +23,7 @@ st.write("KOBIS 영화관입장권통합전산망의 일일 박스오피스 정�
 # 2. 한국 시간 기준으로 '어제' 계산하기
 # -----------------------------------------
 # 배포 서버의 시간이 한국 시간이 아닐 수 있기 때문에
-# 반드시 한국 시간(KST)을 기준으로 날짜를 계산합니다.
+# 한국 시간(KST)을 기준으로 날짜를 계산합니다.
 kst = ZoneInfo("Asia/Seoul")
 
 today_kst = datetime.now(kst).date()
@@ -40,11 +41,11 @@ st.caption(
 # -----------------------------------------
 # 3. KOBIS API에서 데이터 가져오기
 # -----------------------------------------
-# st.cache_data를 사용하면 같은 날짜의 데이터를
-# 약 1시간 동안 저장해 두어 API를 계속 호출하지 않습니다.
+# 같은 날짜를 다시 요청하면 1시간 동안 저장된 데이터를 사용합니다.
 @st.cache_data(ttl=3600)
 def get_boxoffice(target_dt):
-    # 인증키는 Streamlit secrets에서 가져옵니다.
+
+    # 인증키는 Streamlit Secrets에서 가져옵니다.
     # 실제 인증키를 코드에 직접 작성하지 않습니다.
     api_key = st.secrets["KOBIS_KEY"]
 
@@ -59,16 +60,17 @@ def get_boxoffice(target_dt):
     }
 
     try:
+        # KOBIS API에 요청합니다.
         response = requests.get(
             url,
             params=params,
             timeout=10
         )
 
-        # HTTP 오류가 발생했는지 확인합니다.
+        # HTTP 오류가 있으면 오류로 처리합니다.
         response.raise_for_status()
 
-        # JSON 형태의 응답을 가져옵니다.
+        # JSON 데이터를 가져옵니다.
         data = response.json()
 
     except Exception as e:
@@ -77,10 +79,14 @@ def get_boxoffice(target_dt):
             "error": f"API 요청에 실패했습니다: {e}"
         }
 
+
     # -----------------------------------------
-    # 4. 인증키 오류 등 faultInfo 확인
+    # 4. faultInfo 오류 확인
     # -----------------------------------------
+    # KOBIS는 인증키가 잘못되어도 상태코드가 200일 수 있습니다.
+    # 따라서 faultInfo가 있는지 따로 확인합니다.
     if "faultInfo" in data:
+
         fault = data["faultInfo"]
 
         return {
@@ -92,8 +98,9 @@ def get_boxoffice(target_dt):
             )
         }
 
+
     # -----------------------------------------
-    # 5. 정상적인 박스오피스 데이터 확인
+    # 5. 박스오피스 결과 확인
     # -----------------------------------------
     boxoffice_result = data.get("boxOfficeResult")
 
@@ -102,21 +109,29 @@ def get_boxoffice(target_dt):
             "success": False,
             "error": (
                 "박스오피스 결과가 없습니다.\n\n"
-                "KOBIS API 응답 형식을 확인해 주세요."
+                "KOBIS API 응답을 확인해 주세요."
             )
         }
 
-    movie_list = boxoffice_result.get("dailyBoxOfficeList", [])
 
+    # 영화 목록 가져오기
+    movie_list = boxoffice_result.get(
+        "dailyBoxOfficeList",
+        []
+    )
+
+
+    # 영화 목록이 비어 있는 경우
     if not movie_list:
         return {
             "success": False,
             "error": (
                 "해당 날짜의 영화 목록이 없습니다.\n\n"
-                "조회 날짜에 박스오피스 데이터가 집계되었는지 "
-                "또는 KOBIS API가 정상적으로 응답했는지 확인해 주세요."
+                "해당 날짜에 박스오피스 데이터가 집계되었는지 "
+                "확인해 주세요."
             )
         }
+
 
     return {
         "success": True,
@@ -134,6 +149,7 @@ result = get_boxoffice(target_dt)
 # 7. API 오류가 발생했을 때 안내
 # -----------------------------------------
 if not result["success"]:
+
     st.error("박스오피스 정보를 가져오지 못했습니다.")
 
     st.warning(
@@ -145,6 +161,7 @@ if not result["success"]:
         f"상세 내용: {result['error']}"
     )
 
+    # 오류가 발생했으므로 아래 코드를 실행하지 않습니다.
     st.stop()
 
 
@@ -157,10 +174,10 @@ df = pd.DataFrame(movies)
 
 
 # -----------------------------------------
-# 9. 숫자로 변환하기
+# 9. 숫자 데이터를 실제 숫자로 변환
 # -----------------------------------------
-# KOBIS API에서는 숫자도 문자열로 전달되므로
-# 정렬과 그래프에 사용할 수 있도록 숫자로 변환합니다.
+# KOBIS API에서는 숫자도 문자열로 전달됩니다.
+# 정렬과 그래프를 위해 숫자로 변환합니다.
 
 number_columns = [
     "rank",
@@ -172,7 +189,9 @@ number_columns = [
 ]
 
 for column in number_columns:
+
     if column in df.columns:
+
         df[column] = pd.to_numeric(
             df[column],
             errors="coerce"
@@ -180,35 +199,60 @@ for column in number_columns:
 
 
 # -----------------------------------------
-# 10. 순위순으로 정렬
+# 10. 관객수가 많은 순서로 정렬
 # -----------------------------------------
-df = df.sort_values("rank")
+# 기존 KOBIS 순위가 아니라
+# 실제 관객수가 많은 순서대로 다시 정렬합니다.
+
+df = (
+    df.sort_values(
+        "audiCnt",
+        ascending=False
+    )
+    .reset_index(drop=True)
+)
 
 
 # -----------------------------------------
-# 11. 1위 영화 정보 보여주기
+# 11. 관객수 순서대로 새로운 순위 부여
 # -----------------------------------------
+# 가장 많은 관객을 모은 영화가 1위가 됩니다.
+
+df["rank"] = range(1, len(df) + 1)
+
+
+# -----------------------------------------
+# 12. 1위 영화 정보 보여주기
+# -----------------------------------------
+# 이제 df의 첫 번째 영화는
+# 관객수가 가장 많은 영화입니다.
+
 first_movie = df.iloc[0]
 
-st.subheader("🏆 오늘의 1위")
+st.subheader("🏆 어제의 1위")
 
 st.markdown(
     f"## {first_movie['movieNm']}"
 )
 
+
+# 지표 카드 3개를 만듭니다.
 col1, col2, col3 = st.columns(3)
+
 
 with col1:
     st.metric(
-        "오늘 관객수",
+        "관객수",
         f"{first_movie['audiCnt']:,}명"
     )
 
+
 with col2:
     st.metric(
-        "누적 관객수",
+        "누적관객",
         f"{first_movie['audiAcc']:,}명"
     )
+
 
 with col3:
     st.metric(
@@ -218,11 +262,11 @@ with col3:
 
 
 # -----------------------------------------
-# 12. 전체 영화 목록을 표로 보여주기
+# 13. 전체 박스오피스 표
 # -----------------------------------------
 st.subheader("📋 전체 박스오피스")
 
-# 사용자에게 보여줄 열만 선택합니다.
+# 필요한 열만 선택합니다.
 display_df = df[
     [
         "rank",
@@ -234,6 +278,7 @@ display_df = df[
     ]
 ].copy()
 
+
 # 열 이름을 한국어로 바꿉니다.
 display_df.columns = [
     "순위",
@@ -244,6 +289,9 @@ display_df.columns = [
     "스크린수"
 ]
 
+
+# 표를 화면에 표시합니다.
+# 이미 관객수가 많은 순서로 정렬되어 있습니다.
 st.dataframe(
     display_df,
     use_container_width=True,
@@ -252,10 +300,11 @@ st.dataframe(
 
 
 # -----------------------------------------
-# 13. 관객수 상위 5편 막대그래프
+# 14. 관객수 상위 5편 막대그래프
 # -----------------------------------------
 st.subheader("📊 관객수 상위 5편")
 
+# 관객수가 많은 순서대로 5편을 가져옵니다.
 top5 = (
     df.sort_values(
         "audiCnt",
@@ -265,9 +314,12 @@ top5 = (
     .copy()
 )
 
-# 영화명을 인덱스로 설정하고 관객수를 그래프로 표시합니다.
+
+# 영화명을 인덱스로 설정합니다.
 chart_data = top5.set_index("movieNm")[["audiCnt"]]
 
+
+# 막대그래프를 표시합니다.
 st.bar_chart(
     chart_data,
     x_label="영화",
@@ -276,7 +328,7 @@ st.bar_chart(
 
 
 # -----------------------------------------
-# 14. 데이터 출처 안내
+# 15. 데이터 출처
 # -----------------------------------------
 st.divider()
 
@@ -284,3 +336,5 @@ st.caption(
     "데이터 출처: KOBIS 영화관입장권통합전산망 "
     "(Korean Box Office Information System)"
 )
+```
+
